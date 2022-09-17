@@ -1,0 +1,53 @@
+<h1>QR Scanner</h1>
+<style>
+    .result {
+        background-color: green;
+        color: #fff;
+        padding: 20px;
+    }
+    .row {
+        display: flex;
+    }
+</style>
+<div id="open" style="display: flex;">
+</div>
+    <div class="col" style="padding:30px;">
+        <h4>SCAN RESULT</h4>
+        <h4 id="h55">
+        </h5>
+        <input type="text" name="email" id="email">
+        <input type="event"id="username"name="username">
+        <button submit="submit" onclick="fetchapi()">submit</button>
+    </div>
+<script type="text/javascript">
+    const fetchapi = () => {
+        let username = document.getElementById('username').value;
+        let email = document.getElementById('email').value;
+        const object = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username,
+                email
+            })
+        }
+        fetch('/fetchform', object)
+            .then(res => res.json())
+            .then(data => {
+                if(data.result2 === 'found'){
+                    document.getElementById("h55").innerHTML = data.result.username+"\n"
+                    console.log(document.getElementById("h55").innerHTML)
+                }
+                else{
+                    document.getElementById("h55").innerHTML = "Not found"+"\n"
+                    console.log('Here object was not found',data.result)
+                }
+            })
+            .catch(err => {
+                console.log(err)
+                document.getElementById('open').innerHTML = '<h1>Invalid</h1>'
+            })
+    }
+</script>
