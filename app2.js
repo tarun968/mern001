@@ -6,6 +6,7 @@ const fast2sms = require('fast-two-sms')
 const cors = require('cors')
 const mongoose = require('mongoose')
 const { ObjectId } = mongoose.Schema
+var nodemailer = require('nodemailer')
 const bcrypt = require('bcrypt')
 const cookieParser = require('cookie-parser')
 const Nexmo = require('nexmo')
@@ -17,10 +18,15 @@ const { syncBuiltinESMExports } = require('module')
 const { EsimProfileContext } = require('twilio/lib/rest/supersim/v1/esimProfile')
 var formidable = require("formidable");
 require('ejs')
+let twilioNum = process.env.TWILIO_PHONE_NUMBER;
 app.use(cookieParser());
 app.use(express.static("public"));
 app.use(express.json());
 app.use(cors())
+
+const accountSid = "AC7e66ebfd232fa5a099e2efe216067bac"
+const authToken = "786bc0de6744384539523c41963b0b64";
+const client = require('twilio')(accountSid, authToken);
 const fs = require('fs')
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -54,6 +60,18 @@ const Category = new Schema({
     { timestamps: true }
 )
 
+
+const OTPschema = new Schema({
+    otp: Number,
+    made: Date,
+    expires: Date,
+    to: String
+},
+    { timestamps: true }
+)
+const Otp_Model = mongoose.model("OTP", OTPschema)
+
+
 const userSchema = new Schema({
     username: {
         type: String,
@@ -67,16 +85,17 @@ const userSchema = new Schema({
         type: String,
         required: true
     },
-    purchases:[{
-    _id : String,
-    name: String,
-    description: String,
-    category: String,
-    quantity:Number,
-    amount:Number,
-    transaction_id: {},
+    purchases: [{
+        _id: String,
+        name: String,
+        description: String,
+        category: String,
+        quantity: Number,
+        amount: Number,
+        transaction_id: {},
     }]
     ,
+    mobile: String,
     address: {
         type: String,
         required: true
@@ -159,11 +178,12 @@ var isSignedIn = jwtk(
     })
 
 const getAllproducts = async (req, res) => {
-    console.log(req)
+    console.log("products i am getting ", req.query.sortBy)
     let limit = req.query.limit ? parseInt(req.query.limit) : 8
-    let sortBy = req.query.sortBy ? req.query.sortBy : "_id"
+    let sortBy = req.query.sortBy ? req.query.sortBy : "category"
+    console.log(sortBy)
     Product_model.find().
-        sort([[sortBy, "asc"]]).
+        sort([['category']]).
         select("-photo").
         limit(limit).
         exec(
@@ -174,6 +194,10 @@ const getAllproducts = async (req, res) => {
                     })
                 }
                 console.log("]hgsgzgzffgz")
+                // console.log("products",products[])
+                products.forEach(element => {
+                    console.log(element.name)
+                });
                 return res.json(products)
             }
         )
@@ -207,7 +231,7 @@ const pushOrderInPurchaseList = (req, res, next) => {
     let purchases = [];
     console.log("finally we are here to purchase our order", req.body)
     req.body.order.products.forEach(product => {
-        console.log("-------------------->",product)
+        console.log("-------------------->", product)
         purchases.push({
             _id: product._id,
             name: product.name,
@@ -236,6 +260,7 @@ const pushOrderInPurchaseList = (req, res, next) => {
 
 const isAuthencticated = async (req, res, next) => {
     try {
+
         console.log(req.profile._id.toString())
         console.log("req auth is", req.auth)
         console.log("req profile is", req.profile)
@@ -396,8 +421,10 @@ const updateCategory = async (req, res) => {
     })
 }
 const removeCategory = async (req, res) => {
-    console.log("Removing the category here")
+    console.log("Removing the category here", req.category._id)
     const category = req.category
+    const products = await Product_model.deleteMany({ category: req.category._id })
+    console.log("products", products)
     category.remove((err, deleted) => {
         if (err) {
             return res.status(400).json({
@@ -590,8 +617,8 @@ const createProduct = (req, res) => {
                 error: "Problem with image"
             })
         }
-        console.log("Here are the fields",fields)
-        console.log("Here are the fields",file)
+        console.log("Here are the fields", fields)
+        console.log("Here are the fields", file)
         const { name, description, price, category, stock } = fields
         console.log({ name, description, price, category, stock })
         if (!name || !description || !price || !category || !stock) {
@@ -660,6 +687,10 @@ const processPayment = (req, res) => {
 app.param("userId", getUserById)
 app.param("orderId", getOrderById);
 app.param("/user/:userId", getUser)
+
+
+
+
 app.param("productId", getProductbyId)
 app.param("categoryId", getCategoryById)
 app.get("/order/:orderId", getOrder)
@@ -669,6 +700,145 @@ app.get("/pr/:productId", getProduct)
 app.get("/product/:productId", getProduct)
 app.get("/ph/photo/:productId", getphoto)
 app.get("/products", getAllproducts)
+
+
+
+app.post("/verifyOTP", async (req, res) => {
+
+    let form = new formidable.IncomingForm()
+    form.keepExtensions = true
+    form.parse(req, async (err, fields, file) => {
+        console.log("fields ot verify",fields)
+        let x = await Otp_Model.findOne({ otp: fields.otp }).exec()
+        if (x) {
+            let currentTime = Date.now()
+            let diff = x.expires - currentTime
+            if (diff < 0) {
+                return res.json({ error: 'OTP is invallid' })
+            } else {
+                let user = await userModel.findOne({ email: x.to })
+                console.log("",user)
+                if (user.password === fields.password) {
+                    return res.json({ error: 'same password' })
+                }
+                user.password = fields.password
+                console.log("password reset successfully",user,fields.password)                
+                user.save()
+                return res.json({ error: 'OTP was valid and it is saved successfully' })
+            }
+        }
+    })
+
+})
+
+app.post("/sendOTP", async (req, res) => {
+    let form = new formidable.IncomingForm()
+    form.keepExtensions = true
+    form.parse(req, async (err, fields, file) => {
+        console.log('fields', fields)
+        const { email } = fields;
+        var otp = 0;
+        let expires = 0;
+        const otp_model = await Otp_Model.find()
+        if (otp_model.length === 0) {
+            otp = Math.floor(100000 + Math.random() * 900000);
+            const ttl = 2 * 60 * 1000;
+            //two minutes
+            expires = Date.now();
+            const expires2 = Date.now();
+            //   console.log(expires)
+            expires += ttl;
+            let x = await userModel.findOne({ otp: otp }).exec()
+            const new_otp = await Otp_Model({
+                otp: otp,
+                expires: expires,
+                made: expires2,
+                to: `${email}`
+            })
+            await new_otp.save();
+            var transporter = nodemailer.createTransport({
+                service: 'gmail',
+                host: 'smtp.gmail.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: '20bt04049@gsfcuniversity.ac.in',
+                    pass: 'TarunLT@23'
+                }
+            });
+            var mailOptions = {
+                from: '20bt04049@gsfcuniversity.ac.in',
+                to: `${email}`,
+                subject: 'Sending you the email',
+                html: `<h1>Welcome to you</h1><p>${otp} valid for 2 minute only</p>`
+            };
+            transporter.sendMail(mailOptions, function (err, info) {
+                if (err) {
+                    return res.status(200).json({ error: info })
+                    // console.log('Error',err)
+                }
+                else {
+                    console.log("Email Sent" + info.response)
+                    return res.status(200).json(info)
+                }
+            })
+        }
+        else {
+            while (true) {
+                otp = Math.floor(100000 + Math.random() * 900000);
+                const ttl = 2 * 60 * 1000;
+                //two minutes
+                expires = Date.now();
+                const expires2 = Date.now();
+                console.log(expires)
+                expires += ttl;
+                let x = await Otp_Model.findOne({ otp: otp }).exec()
+                console.log("x", x)
+                if (x) {
+                    continue;
+                }
+                else {
+                    const new_otp = await Otp_Model({
+                        otp: otp,
+                        expires: expires,
+                        made: expires2,
+                        to: `${email}`
+                    })
+                    await new_otp.save();
+                    break;
+                }
+            }
+            var transporter = nodemailer.createTransport({
+                service: 'gmail',
+                host: 'smtp.gmail.com',
+                port: 465,
+                secure: true,
+                auth: {
+                    user: '20bt04049@gsfcuniversity.ac.in',
+                    pass: 'TarunLT@23'
+                }
+            });
+            var mailOptions = {
+                from: '20bt04049@gsfcuniversity.ac.in',
+                to: `${email}`,
+                subject: 'Sending you the email',
+                html: `<h1>Welcome to you</h1><p>${otp} valid for 2 minute only</p>`
+            };
+            transporter.sendMail(mailOptions, function (err, info) {
+                if (err) {
+                    return res.status(200).json({ error: info })
+                    // console.log('Error',err)
+                }
+                else {
+                    console.log("Email Sent" + info.response)
+                    return res.status(200).json(info)
+                }
+            })
+        }
+
+    })
+}
+)
 app.get("/products/categories", getAllUniqueCategory)
 app.get("/india/payment/gettoken/:userId",
     isSignedIn,
@@ -694,7 +864,7 @@ app.post("/signin", async (req, res) => {
             password: req.body.password,
             email: req.body.password, _id: record._id
         },
-        process.env.SECRET)
+            process.env.SECRET)
         res.cookie("jwt", token, { expiresIn: new Date() + 9999 })
         const { _id, email, password, username, address, role } = record
         return res.json({ token, user: { _id, email, password, username, role, address } })
@@ -714,6 +884,7 @@ app.post("/signin", async (req, res) => {
 // })
 // record.save()
 app.post("/signup", async (req, res) => {
+
     console.log("'hhdaragf ftdhrdyr hxt shtsstst")
     console.log(req.body)
     try {
@@ -820,7 +991,7 @@ app.put("/cri/:categoryId/:userId",
     isSignedIn,
     isAuthencticated,
     isAdmin
-    ,updateCategory)
+    , updateCategory)
 app.delete("/cri/:categoryId/:userId",
     isSignedIn,
     isAuthencticated,

@@ -52,10 +52,8 @@ app.post("/verifyOTP", async (req, res) => {
 })
 let expires = 0
 app.post("/sendOTP", async (req, res) => {
+  console.log("req",req.body)
   const { from, to } = req.body;
-  console.log(from)
-  console.log(to)
-  console.log(req.body)
   var otp = 0;
   while (true) {
     otp = Math.floor(100000 + Math.random() * 900000);
